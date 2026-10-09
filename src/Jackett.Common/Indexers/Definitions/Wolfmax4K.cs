@@ -288,6 +288,10 @@ namespace Jackett.Common.Indexers.Definitions
 
             var enlacitoHtmlParser = new HtmlParser();
             var enlacitoDoc = await enlacitoHtmlParser.ParseDocumentAsync(enlacitoPage.ContentString);
+            var enlacitoRedirectUrl = GetEnlacitoRedirectUrl(enlacitoPage, enlacitoDoc);
+            if (enlacitoRedirectUrl != null)
+                return await DownloadFromEnlacitoRedirectAsync(enlacitoRedirectUrl);
+
             if (enlacitoDoc.QuerySelector("#contador") != null ||
                 enlacitoDoc.QuerySelector("button.button[onclick*='gotourl']") != null)
                 throw new Exception("Enlacito requires browser-based verification and redirects through Google; Jackett cannot complete this step automatically.");
@@ -309,15 +313,93 @@ namespace Jackett.Common.Indexers.Definitions
             var enlacito2Page = await RequestEnlacitoAsync(
                 new Uri(new Uri(enlacitoUrl), enlacitoFormUrl).AbsoluteUri,
                 enlacitoCookie, method: RequestType.POST, referer: enlacitoUrl, data: body);
+            enlacitoDoc = await enlacitoHtmlParser.ParseDocumentAsync(enlacito2Page.ContentString);
+            enlacitoRedirectUrl = GetEnlacitoRedirectUrl(enlacito2Page, enlacitoDoc);
+            if (enlacitoRedirectUrl != null)
+                return await DownloadFromEnlacitoRedirectAsync(enlacitoRedirectUrl);
+
             var regex = new Regex("var link_out = \"(.*)\"");
             var v = regex.Match(enlacito2Page.ContentString);
 
             var linkOut = v.Groups[1].ToString();
+            if (linkOut.IsNullOrWhiteSpace())
+                throw new Exception("Enlacito returned an unsupported download response.");
             var slink = Encoding.UTF8.GetString(Convert.FromBase64String(linkOut));
             var ulink = await OpenSSLDecryptAsync(slink, TorrentLinkEncryptionKey);
 
             var result = await RequestWithCookiesAndRetryAsync(ulink);
             return result.ContentBytes;
+        }
+
+        private static string GetEnlacitoRedirectUrl(WebResult result, IDocument document)
+        {
+            if (Uri.TryCreate(result.RedirectingTo, UriKind.Absolute, out var redirectUri) &&
+                IsEnlacitoRedirectUri(redirectUri))
+                return redirectUri.AbsoluteUri;
+
+            foreach (var anchor in document.QuerySelectorAll("a[href]"))
+            {
+                if (Uri.TryCreate(new Uri(result.Request.Url), anchor.GetAttribute("href"), out redirectUri) &&
+                    IsEnlacitoRedirectUri(redirectUri))
+                    return redirectUri.AbsoluteUri;
+            }
+
+            return null;
+        }
+
+        private static bool IsEnlacitoRedirectUri(Uri uri)
+        {
+            return uri.Scheme == Uri.UriSchemeHttps &&
+                   (uri.Host.Equals("enlacito.com", StringComparison.OrdinalIgnoreCase) ||
+                    uri.Host.Equals("www.enlacito.com", StringComparison.OrdinalIgnoreCase)) &&
+                   uri.AbsolutePath.Equals("/r.php", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task<byte[]> DownloadFromEnlacitoRedirectAsync(string redirectUrl)
+        {
+            var redirectUri = new Uri(redirectUrl);
+            var encodedTarget = HttpUtility.ParseQueryString(redirectUri.Query)["l"];
+            if (encodedTarget.IsNullOrWhiteSpace())
+                throw new Exception("Enlacito returned an invalid redirect without a destination.");
+
+            string obfuscatedTarget;
+            try
+            {
+                obfuscatedTarget = Encoding.UTF8.GetString(
+                    Convert.FromBase64String(encodedTarget.Replace(" ", "+")));
+            }
+            catch (FormatException e)
+            {
+                throw new Exception("Enlacito returned an invalid encoded destination.", e);
+            }
+
+            var targetUrl = Rot13(obfuscatedTarget);
+            if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var targetUri) ||
+                targetUri.Scheme != Uri.UriSchemeHttps ||
+                !IsWolfmaxTorrentHost(targetUri.Host))
+                throw new Exception("Enlacito returned a destination outside the Wolfmax4K site.");
+
+            var torrent = await RequestWithCookiesAndRetryAsync(targetUri.AbsoluteUri, referer: SiteLink);
+            return torrent.ContentBytes;
+        }
+
+        private bool IsWolfmaxTorrentHost(string host)
+        {
+            var allowedHosts = new[] { SiteLink }.Concat(LegacySiteLinks)
+                .Select(site => new Uri(site).Host);
+            return allowedHosts.Contains(host, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string Rot13(string value)
+        {
+            return new string(value.Select(character => character switch
+            {
+                >= 'a' and <= 'm' => (char)(character + 13),
+                >= 'n' and <= 'z' => (char)(character - 13),
+                >= 'A' and <= 'M' => (char)(character + 13),
+                >= 'N' and <= 'Z' => (char)(character - 13),
+                _ => character
+            }).ToArray());
         }
 
         private async Task<WebResult> RequestEnlacitoAsync(
@@ -335,7 +417,8 @@ namespace Jackett.Common.Indexers.Definitions
             });
 
             CheckSiteDown(result);
-            if (result.Status != HttpStatusCode.OK)
+            if (result.Status != HttpStatusCode.OK &&
+                !(result.IsRedirect && result.RedirectingTo.IsNotNullOrWhiteSpace()))
                 throw new Exception($"Enlacito returned HTTP {(int)result.Status}.");
 
             return result;
