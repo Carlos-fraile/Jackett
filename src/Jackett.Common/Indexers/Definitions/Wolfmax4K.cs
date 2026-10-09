@@ -324,7 +324,7 @@ namespace Jackett.Common.Indexers.Definitions
             string url, string cookies, RequestType method = RequestType.GET,
             string referer = null, IEnumerable<KeyValuePair<string, string>> data = null)
         {
-            var result = await webclient.GetResultAsync(new WebRequest
+            var result = await webclient.GetResultAsync(new Jackett.Common.Utils.Clients.WebRequest
             {
                 Url = url,
                 Type = method,
