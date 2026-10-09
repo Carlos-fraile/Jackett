@@ -281,8 +281,15 @@ namespace Jackett.Common.Indexers.Definitions
             }
             if (!external)
             {
-                var torrent = await RequestWithCookiesAndRetryAsync(torrentUrl.AbsoluteUri, referer: SiteLink);
-                return torrent.ContentBytes;
+                try
+                {
+                    var torrent = await RequestWithCookiesAndRetryAsync(torrentUrl.AbsoluteUri, referer: SiteLink);
+                    return torrent.ContentBytes;
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception($"Error downloading torrent from {torrentUrl}: {ex.Message}");
+                }
             }
 
             // external links go through the link protector, eg: https://enlacito.com/s.php?i=xxx
