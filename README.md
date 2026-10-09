@@ -968,21 +968,17 @@ launchctl load ~/Library/LaunchAgents/org.user.Jackett.plist
 
 ### Docker Installation
 
-This repository builds a multi-platform image (`linux/amd64` and `linux/arm64`) and publishes versioned images to the private GitHub Container Registry package `ghcr.io/carlos-fraile/jackett` whenever a `v*` release tag is pushed. Pull requests and pushes to `master` build the image without publishing it.
+This repository builds a multi-platform image (`linux/amd64` and `linux/arm64`). Pull requests build it to validate changes, and each push to `master` publishes `ghcr.io/carlos-fraile/jackett:master`, so you can run it with Docker Compose without creating a release. Pushing a `v*` release tag also publishes a versioned image and updates `:latest`.
 
-Authenticate to GHCR with a GitHub personal access token that has the `read:packages` scope, then pull and run the image:
+To use the latest image built from `master`, first authenticate to GHCR with a GitHub personal access token that has the `read:packages` scope. Then run these commands from the repository directory:
 
 ```bash
 docker login ghcr.io
-docker pull ghcr.io/carlos-fraile/jackett:latest
-docker run -d --name jackett \
-  -p 127.0.0.1:9117:9117 \
-  -v jackett-config:/config \
-  --restart unless-stopped \
-  ghcr.io/carlos-fraile/jackett:latest
+docker compose pull
+docker compose up -d
 ```
 
-The `latest` tag tracks the most recently published release; versioned tags use the release name, for example `ghcr.io/carlos-fraile/jackett:v0.24.123`. Keep the package private in the GitHub package settings and grant access to the accounts that need to pull it. The example binds the web interface to localhost; change this only if you intend to expose it to your network.
+Open `http://127.0.0.1:9117`. The Compose file persists Jackett configuration in a named volume and binds the web interface to localhost. To use a release instead, change the image in `docker-compose.yml` to `ghcr.io/carlos-fraile/jackett:latest` or a version tag such as `ghcr.io/carlos-fraile/jackett:v0.24.123`. Keep the GHCR package private and grant access to the accounts that need to pull it.
 
 The separately maintained [LinuxServer.io Jackett image](https://hub.docker.com/r/linuxserver/jackett/) is also available.
 

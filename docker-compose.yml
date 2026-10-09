@@ -1,0 +1,12 @@
+services:
+  jackett:
+    image: ghcr.io/carlos-fraile/jackett:master
+    container_name: jackett
+    ports:
+      - "127.0.0.1:9117:9117"
+    volumes:
+      - jackett-config:/config
+    restart: unless-stopped
+
+volumes:
+  jackett-config:
