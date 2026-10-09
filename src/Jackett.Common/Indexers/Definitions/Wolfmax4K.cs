@@ -240,10 +240,14 @@ namespace Jackett.Common.Indexers.Definitions
             });
             var challenge = generate.Value<string>("challenge");
             var pow = generate["pow"];
-            if (pow?.Value<int>("version") != 2)
-                throw new Exception($"Error, the proof of work version {pow?.Value<string>("version")} of the site is not supported.");
+            if (pow == null)
+                throw new Exception("Error, the proof of work data is missing from the generate response.");
 
-            var nonces = ComputeProofOfWork(challenge, pow.Value<int>("rounds"), pow.Value<int>("difficulty"));
+            var rounds = pow.Value<int>("rounds");
+            var difficulty = pow.Value<int>("difficulty");
+            if (rounds == 0 || difficulty == 0)
+                throw new Exception("Error, the proof of work rounds/difficulty are missing from the generate response.");
+            var nonces = ComputeProofOfWork(challenge, rounds, difficulty);
 
             await Task.Delay(pow.Value<int>("min_duration_ms"));
 
