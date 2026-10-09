@@ -69,6 +69,8 @@ namespace Jackett.Common.Indexers.Definitions
                    configData: new ConfigurationData())
         {
             configData.AddDynamic("flaresolverr", new DisplayInfoConfigurationItem("FlareSolverr", "This site may use Cloudflare DDoS Protection, therefore Jackett requires <a href=\"https://github.com/Jackett/Jackett#configuring-flaresolverr\" target=\"_blank\">FlareSolverr</a> to access it."));
+            configData.AddDynamic("enlacitoCookie", new PasswordConfigurationItem("Enlacito Cookie"));
+            configData.AddDynamic("enlacitoCookieInfo", new DisplayInfoConfigurationItem("Enlacito Cookie Instructions", "Optional: enter the Enlacito cookie as <code>name=value</code> to reuse a browser validation. It is sent only to Enlacito. The cookie expires and must be refreshed manually."));
             webclient.requestDelay = 0.5;
             webclient.EmulateBrowser = false;
         }
@@ -272,20 +274,41 @@ namespace Jackett.Common.Indexers.Definitions
 
             // external links go through the link protector, eg: https://enlacito.com/s.php?i=xxx
             var enlacitoUrl = torrentUrl.AbsoluteUri;
-            var enlacitoPage = await RequestWithCookiesAndRetryAsync(enlacitoUrl, referer: SiteLink);
+            var enlacitoCookieItem = (PasswordConfigurationItem)configData.GetDynamic("enlacitoCookie");
+            var enlacitoCookie = enlacitoCookieItem.Value;
+            if (enlacitoCookie.IsNotNullOrWhiteSpace())
+            {
+                var cookieDictionary = CookieUtil.CookieHeaderToDictionary(enlacitoCookie);
+                if (cookieDictionary.Count == 0)
+                    throw new Exception("The Enlacito cookie must be entered as name=value.");
+                enlacitoCookie = CookieUtil.CookieDictionaryToHeader(cookieDictionary);
+            }
+            var enlacitoPage = await RequestEnlacitoAsync(enlacitoUrl, enlacitoCookie, referer: SiteLink);
+            enlacitoCookie = MergeCookieHeaders(enlacitoCookie, enlacitoPage.Cookies);
 
             var enlacitoHtmlParser = new HtmlParser();
             var enlacitoDoc = await enlacitoHtmlParser.ParseDocumentAsync(enlacitoPage.ContentString);
-            var enlacitoFormUrl = enlacitoDoc.QuerySelector("form").GetAttribute("action");
-            var enlacitoFormLinkser = enlacitoDoc.QuerySelector("input[name=\"linkser\"]").GetAttribute("value");
-            var enlacitoFormFlow = enlacitoDoc.QuerySelector("input[name=\"flow\"]").GetAttribute("value");
+            if (enlacitoDoc.QuerySelector("#contador") != null ||
+                enlacitoDoc.QuerySelector("button.button[onclick*='gotourl']") != null)
+                throw new Exception("Enlacito requires browser-based verification and redirects through Google; Jackett cannot complete this step automatically.");
+
+            var form = enlacitoDoc.QuerySelector("form");
+            var enlacitoFormUrl = form?.GetAttribute("action");
+            var enlacitoFormLinkser = form?.QuerySelector("input[name=\"linkser\"]")?.GetAttribute("value");
+            var enlacitoFormFlow = form?.QuerySelector("input[name=\"flow\"]")?.GetAttribute("value");
+            if (enlacitoFormUrl.IsNullOrWhiteSpace() ||
+                enlacitoFormLinkser.IsNullOrWhiteSpace() ||
+                enlacitoFormFlow.IsNullOrWhiteSpace())
+                throw new Exception("Enlacito returned an unsupported download page.");
 
             var body = new Dictionary<string, string>
             {
                 { "linkser", enlacitoFormLinkser },
                 { "flow", enlacitoFormFlow }
             };
-            var enlacito2Page = await RequestWithCookiesAndRetryAsync(enlacitoFormUrl, data: body, method: RequestType.POST);
+            var enlacito2Page = await RequestEnlacitoAsync(
+                new Uri(new Uri(enlacitoUrl), enlacitoFormUrl).AbsoluteUri,
+                enlacitoCookie, method: RequestType.POST, referer: enlacitoUrl, data: body);
             var regex = new Regex("var link_out = \"(.*)\"");
             var v = regex.Match(enlacito2Page.ContentString);
 
@@ -295,6 +318,38 @@ namespace Jackett.Common.Indexers.Definitions
 
             var result = await RequestWithCookiesAndRetryAsync(ulink);
             return result.ContentBytes;
+        }
+
+        private async Task<WebResult> RequestEnlacitoAsync(
+            string url, string cookies, RequestType method = RequestType.GET,
+            string referer = null, IEnumerable<KeyValuePair<string, string>> data = null)
+        {
+            var result = await webclient.GetResultAsync(new WebRequest
+            {
+                Url = url,
+                Type = method,
+                Cookies = cookies,
+                Referer = referer,
+                PostData = data,
+                Encoding = Encoding
+            });
+
+            CheckSiteDown(result);
+            if (result.Status != HttpStatusCode.OK)
+                throw new Exception($"Enlacito returned HTTP {(int)result.Status}.");
+
+            return result;
+        }
+
+        private static string MergeCookieHeaders(params string[] cookieHeaders)
+        {
+            var cookies = new Dictionary<string, string>();
+            foreach (var cookieHeader in cookieHeaders)
+            {
+                foreach (var cookie in CookieUtil.CookieHeaderToDictionary(cookieHeader))
+                    cookies[cookie.Key] = cookie.Value;
+            }
+            return CookieUtil.CookieDictionaryToHeader(cookies);
         }
 
         private async Task<JObject> DownloadApiRequestAsync(object body)
