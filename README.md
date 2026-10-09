@@ -968,11 +968,23 @@ launchctl load ~/Library/LaunchAgents/org.user.Jackett.plist
 
 ### Docker Installation
 
-Docker installation is highly recommended, especially if you are experiencing Mono stability issues or having trouble running Mono on your system (e.g., QNAP, Synology).
+This repository builds a multi-platform image (`linux/amd64` and `linux/arm64`) and publishes versioned images to the private GitHub Container Registry package `ghcr.io/carlos-fraile/jackett` whenever a `v*` release tag is pushed. Pull requests and pushes to `master` build the image without publishing it.
 
-Detailed instructions are available at [LinuxServer.io Jackett Docker](https://hub.docker.com/r/linuxserver/jackett/)
+Authenticate to GHCR with a GitHub personal access token that has the `read:packages` scope, then pull and run the image:
 
-Thanks to [LinuxServer.io](https://linuxserver.io) for maintaining the Docker image.
+```bash
+docker login ghcr.io
+docker pull ghcr.io/carlos-fraile/jackett:latest
+docker run -d --name jackett \
+  -p 127.0.0.1:9117:9117 \
+  -v jackett-config:/config \
+  --restart unless-stopped \
+  ghcr.io/carlos-fraile/jackett:latest
+```
+
+The `latest` tag tracks the most recently published release; versioned tags use the release name, for example `ghcr.io/carlos-fraile/jackett:v0.24.123`. Keep the package private in the GitHub package settings and grant access to the accounts that need to pull it. The example binds the web interface to localhost; change this only if you intend to expose it to your network.
+
+The separately maintained [LinuxServer.io Jackett image](https://hub.docker.com/r/linuxserver/jackett/) is also available.
 
 ---
 
