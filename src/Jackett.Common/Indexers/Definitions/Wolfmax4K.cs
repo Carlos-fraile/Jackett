@@ -241,7 +241,12 @@ namespace Jackett.Common.Indexers.Definitions
             var challenge = generate.Value<string>("challenge");
             var pow = generate["pow"];
             if (pow == null)
-                throw new Exception("Error, the proof of work data is missing from the generate response.");
+            {
+                // Pow field missing - API format may have changed or FlareSolverr may be needed
+                // Try to get more info from response for debugging
+                var responseContent = generate.ToString();
+                throw new Exception($"Error, the proof of work data is missing from the generate response. API response: {responseContent}");
+            }
 
             var rounds = pow.Value<int>("rounds");
             var difficulty = pow.Value<int>("difficulty");
