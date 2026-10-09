@@ -239,11 +239,26 @@ namespace Jackett.Common.Indexers.Definitions
                 tabla = parameters["tabla"]
             });
             var challenge = generate.Value<string>("challenge");
+
+            // Check for new Turnstile verification format
+            var verification = generate["verification"];
+            if (verification != null && verification["provider"]?.ToString() == "turnstile")
+            {
+                // New format: Turnstile CAPTCHA
+                // FlareSolverr should handle this automatically if configured
+                var vrfAction = verification["action"]?.ToString() ?? "";
+                var vrfCdata = verification["cdata"]?.ToString() ?? "";
+                throw new Exception($"Wolfmax4k API format changed to Turnstile CAPTCHA. " +
+                    $"FlareSolverr is configured: http://192.168.5.169:8191. " +
+                    $"API returned verification action={vrfAction}, cdata={vrfCdata}. " +
+                    $"The indexer needs updating to handle the new Turnstile verification flow. " +
+                    $"Current code expects old proof-of-work format with 'pow' field.");
+            }
+
+            // Old format: proof of work with pow field
             var pow = generate["pow"];
             if (pow == null)
             {
-                // Pow field missing - API format may have changed or FlareSolverr may be needed
-                // Try to get more info from response for debugging
                 var responseContent = generate.ToString();
                 throw new Exception($"Error, the proof of work data is missing from the generate response. API response: {responseContent}");
             }
