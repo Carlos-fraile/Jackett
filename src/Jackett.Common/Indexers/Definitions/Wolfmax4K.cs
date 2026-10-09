@@ -270,7 +270,16 @@ namespace Jackett.Common.Indexers.Definitions
 
             // download_url is protocol relative, eg: //wolfmax4k.com/torrents/peliculas/xxx.torrent
             var torrentUrl = new Uri(new Uri(SiteLink), validate.Value<string>("download_url"));
-            if (!validate.Value<bool>("external"))
+            bool external;
+            try
+            {
+                external = validate.Value<bool>("external");
+            }
+            catch
+            {
+                external = false;
+            }
+            if (!external)
             {
                 var torrent = await RequestWithCookiesAndRetryAsync(torrentUrl.AbsoluteUri, referer: SiteLink);
                 return torrent.ContentBytes;
