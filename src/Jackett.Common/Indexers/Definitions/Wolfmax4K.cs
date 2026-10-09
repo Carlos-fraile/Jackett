@@ -68,7 +68,7 @@ namespace Jackett.Common.Indexers.Definitions
                    cacheService: cs,
                    configData: new ConfigurationData())
         {
-            configData.AddDynamic("flaresolverr", new PasswordConfigurationItem("FlareSolverr URL", "URL of the FlareSolverr service, e.g. http://host:8191"));
+            configData.AddDynamic("flaresolverr", new DisplayInfoConfigurationItem("FlareSolverr", "This site may use Cloudflare DDoS Protection, therefore Jackett requires <a href=\"https://github.com/Jackett/Jackett#configuring-flaresolverr\" target=\"_blank\">FlareSolverr</a> to access it."));
             configData.AddDynamic("enlacitoCookie", new PasswordConfigurationItem("Enlacito Cookie"));
             configData.AddDynamic("enlacitoCookieInfo", new DisplayInfoConfigurationItem("Enlacito Cookie Instructions", "Optional: enter the Enlacito cookie as <code>name=value</code> to reuse a browser validation. It is sent only to Enlacito. The cookie expires and must be refreshed manually."));
             webclient.requestDelay = 0.5;
@@ -244,70 +244,30 @@ namespace Jackett.Common.Indexers.Definitions
             var verification = generate["verification"];
             if (verification != null && verification["provider"]?.ToString() == "turnstile")
             {
-                // New format: Turnstile CAPTCHA - use FlareSolverr to solve
-                var sitekey = verification["sitekey"]?.ToString() ?? "";
-                var action = verification["action"]?.ToString() ?? "";
-                var cdata = verification["cdata"]?.ToString() ?? "";
-                var token = await SolveTurnstileCaptchaFlareSolverr(
-                    configData.GetDynamic("flaresolverr").Value,
-                    sitekey, challenge, action, cdata);
-                if (token.IsNullOrWhiteSpace())
-                    throw new Exception("FlareSolverr failed to solve the Turnstile CAPTCHA. Check FlareSolverr logs.");
-                // Use the FlareSolverr token as nonces for validation
-                var nonces = token;
-                await Task.Delay(500); // small delay after captcha solving
-
-                JObject validate = null;
-                for (var attempt = 0; attempt < 3; attempt++)
-                {
-                    validate = await DownloadApiRequestAsync(new
-                    {
-                        action = "validate",
-                        challenge,
-                        nonces
-                    });
-                    if (validate.Value<string>("status") != "pow_pending")
-                        break;
-                    await Task.Delay(validate.Value<int>("retry_after_ms"));
-                }
-                if (validate.Value<string>("status") == "pow_pending")
-                    throw new Exception("Error, the site did not accept the proof of work, try again later.");
+                // New format: Turnstile CAPTCHA
+                // FlareSolverr should handle this automatically if configured
+                var vrfAction = verification["action"]?.ToString() ?? "";
+                var vrfCdata = verification["cdata"]?.ToString() ?? "";
+                throw new Exception($"Wolfmax4k API format changed to Turnstile CAPTCHA. " +
+                    $"FlareSolverr is configured: http://192.168.5.169:8191. " +
+                    $"API returned verification action={vrfAction}, cdata={vrfCdata}. " +
+                    $"The indexer needs updating to handle the new Turnstile verification flow. " +
+                    $"Current code expects old proof-of-work format with 'pow' field.");
             }
-            else
+
+            // Old format: proof of work with pow field
+            var pow = generate["pow"];
+            if (pow == null)
             {
-                // Old format: proof of work with pow field
-                var pow = generate["pow"];
-                if (pow == null)
-                {
-                    var responseContent = generate.ToString();
-                    throw new Exception($"Error, the proof of work data is missing from the generate response. API response: {responseContent}");
-                }
-
-                var rounds = pow.Value<int>("rounds");
-                var difficulty = pow.Value<int>("difficulty");
-                if (rounds == 0 || difficulty == 0)
-                    throw new Exception("Error, the proof of work rounds/difficulty are missing from the generate response.");
-                var nonces = ComputeProofOfWork(challenge, rounds, difficulty);
-
-                await Task.Delay(pow.Value<int>("min_duration_ms"));
-
-                JObject validate = null;
-                for (var attempt = 0; attempt < 3; attempt++)
-                {
-                    validate = await DownloadApiRequestAsync(new
-                    {
-                        action = "validate",
-                        challenge,
-                        nonces
-                    });
-                    if (validate.Value<string>("status") != "pow_pending")
-                        break;
-
-                    await Task.Delay(validate.Value<int>("retry_after_ms"));
-                }
-                if (validate.Value<string>("status") == "pow_pending")
-                    throw new Exception("Error, the site did not accept the proof of work, try again later.");
+                var responseContent = generate.ToString();
+                throw new Exception($"Error, the proof of work data is missing from the generate response. API response: {responseContent}");
             }
+
+            var rounds = pow.Value<int>("rounds");
+            var difficulty = pow.Value<int>("difficulty");
+            if (rounds == 0 || difficulty == 0)
+                throw new Exception("Error, the proof of work rounds/difficulty are missing from the generate response.");
+            var nonces = ComputeProofOfWork(challenge, rounds, difficulty);
 
             await Task.Delay(pow.Value<int>("min_duration_ms"));
 
@@ -878,46 +838,6 @@ namespace Jackett.Common.Indexers.Definitions
 
             return new List<int>();
         }
-
-        private static async Task<string> SolveTurnstileCaptchaFlareSolverr(string flareSolverrUrl, string sitekey, string challenge, string action, string cdata)
-        {
-            // FlareSolverr API expects POST to /v1/instances
-            // Body: {"cmd": "get", "sitekey": "...", "pageurl": "...", "action": "...", "cdata": "..."}
-            // Response: {"success": true, "cdata": "token_value", ...}
-            
-            using var client = new WebClient();
-            var body = new
-            {
-                cmd = "get",
-                sitekey,
-                pageurl = "",
-                action,
-                cdata
-            };
-            
-            try
-            {
-                var json = await client.UploadStringTaskAsync($"{flareSolverrUrl.TrimEnd('/')}/v1/instances", "POST", JsonConvert.SerializeObject(body));
-                var response = JsonConvert.DeserializeObject<FlareSolverrResponse>(json);
-                
-                if (response?.Success == true && !string.IsNullOrEmpty(response.Cdata))
-                    return response.Cdata;
-                
-                return null;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private class FlareSolverrResponse
-        {
-            public bool Success { get; set; }
-            public string Cdata { get; set; }
-            // Other fields may be present but we only need Cdata
-        }
-
     }
 
     internal static class Wolfmax4KCatType
